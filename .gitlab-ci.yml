@@ -18,6 +18,8 @@ stages:
 before_script:
     - apk update && apk add sudo
     - export DOCKER_HOST=tcp://localhost:2375
+    - rc-update add docker boot
+    - service docker start
     - sudo docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
  
 build:
