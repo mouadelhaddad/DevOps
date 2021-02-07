@@ -143,7 +143,7 @@ deploy:
     stage: deploy
     script:
         - apk add sudo 
-        - sudo apt -y install docker-compose
+        - sudo apk add docker-compose
         - sudo docker-compose up 
 
 # NOTE: These links point to the latest templates for development in GitLab canonical project,
