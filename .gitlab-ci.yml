@@ -14,12 +14,12 @@ build:
     stage: build
     script:
         - export DOCKER_HOST="tcp://localhost:2375"
-        - sudo docker build --pull -t "$CI_REGISTRY_IMAGE" .
-        - sudo docker push "$CI_REGISTRY_IMAGE"
+        - docker build --pull -t "$CI_REGISTRY_IMAGE" .
+        - docker push "$CI_REGISTRY_IMAGE"
 test:
     stage: test
     script:
-        - sudo docker-compose run web python manage.py test 
+        - docker-compose run web python manage.py test 
 deploy:
     stage: deploy
     script:
