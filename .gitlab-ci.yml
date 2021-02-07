@@ -2,6 +2,10 @@ image: docker:latest
 
 services:
     - docker:dind
+variables:
+  # Use TLS https://docs.gitlab.com/ee/ci/docker/using_docker_build.html#tls-enabled
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_CERTDIR: "/certs"
 
 stages:
     - build
@@ -13,7 +17,7 @@ before_script:
 build:
     stage: build
     script:
-        - export DOCKER_HOST="tcp://localhost:2375"
+        - export DOCKER_HOST
         - docker build --pull -t "$CI_REGISTRY_IMAGE" .
         - docker push "$CI_REGISTRY_IMAGE"
 test:
