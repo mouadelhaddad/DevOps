@@ -13,6 +13,7 @@ before_script:
 build:
     stage: build
     script:
+        - export DOCKER_HOST="tcp://localhost:2375"
         - sudo docker build --pull -t "$CI_REGISTRY_IMAGE" .
         - sudo docker push "$CI_REGISTRY_IMAGE"
 test:
