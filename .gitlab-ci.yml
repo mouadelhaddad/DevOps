@@ -142,6 +142,7 @@ workflow:
 deploy:
     stage: deploy
     script:
+        - apk add sudo 
         - sudo apt -y install docker-compose
         - sudo docker-compose up 
 
