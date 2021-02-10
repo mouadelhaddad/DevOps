@@ -36,7 +36,6 @@ test:
   before_script:
     # Installing requirements
     - pip install --upgrade pip
-    - pip install -r requirements.txt
   variables:
     # Connecting to testDB
     POSTGRES_DB: postgres
@@ -47,7 +46,8 @@ test:
     - postgres:9.6-alpine
   script:
     # Command to test our application
-    - python manage.py test
+    - pip install -r requirements.txt
+    #- python manage.py test
 
 # Stage II
 # Release Phase
