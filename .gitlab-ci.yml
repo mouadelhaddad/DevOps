@@ -65,7 +65,7 @@ release:
    - export COMMIT_SHA=$(echo $CI_COMMIT_SHA | cut -c1-8)
    - apk update
    - apk upgrade
-   - apk add python python-dev py-pip build-base 
+   - apk add python-dev py-pip build-base 
    - apk add --update ca-certificates
    - apk add --update -t deps curl
    - apk del --purge deps
