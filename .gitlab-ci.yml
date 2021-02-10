@@ -1,174 +1,227 @@
-# Auto DevOps
-# This CI/CD configuration provides a standard pipeline for
-# * building a Docker image (using a buildpack if necessary),
-# * storing the image in the container registry,
-# * running tests from a buildpack,
-# * running code quality analysis,
-# * creating a review app for each topic branch,
-# * and continuous deployment to production
-#
-# Test jobs may be disabled by setting environment variables:
-# * test: TEST_DISABLED
-# * code_quality: CODE_QUALITY_DISABLED
-# * license_management: LICENSE_MANAGEMENT_DISABLED
-# * performance: PERFORMANCE_DISABLED
-# * load_performance: LOAD_PERFORMANCE_DISABLED
-# * sast: SAST_DISABLED
-# * secret_detection: SECRET_DETECTION_DISABLED
-# * dependency_scanning: DEPENDENCY_SCANNING_DISABLED
-# * container_scanning: CONTAINER_SCANNING_DISABLED
-# * dast: DAST_DISABLED
-# * review: REVIEW_DISABLED
-# * stop_review: REVIEW_DISABLED
-# * code_intelligence: CODE_INTELLIGENCE_DISABLED
-#
-# In order to deploy, you must have a Kubernetes cluster configured either
-# via a project integration, or via group/project variables.
-# KUBE_INGRESS_BASE_DOMAIN must also be set on the cluster settings,
-# as a variable at the group or project level, or manually added below.
-#
-# Continuous deployment to production is enabled by default.
-# If you want to deploy to staging first, set STAGING_ENABLED environment variable.
-# If you want to enable incremental rollout, either manual or time based,
-# set INCREMENTAL_ROLLOUT_MODE environment variable to "manual" or "timed".
-# If you want to use canary deployments, set CANARY_ENABLED environment variable.
-#
-# If Auto DevOps fails to detect the proper buildpack, or if you want to
-# specify a custom buildpack, set a project variable `BUILDPACK_URL` to the
-# repository URL of the buildpack.
-# e.g. BUILDPACK_URL=https://github.com/heroku/heroku-buildpack-ruby.git#v142
-# If you need multiple buildpacks, add a file to your project called
-# `.buildpacks` that contains the URLs, one on each line, in order.
-# Note: Auto CI does not work with multiple buildpacks yet
+# Gitlab CI yml file
+# GitLab CI uses the services keyword to define what docker containers should be linked with your base image. Since we are using docker as our image we'll be using docker:dind i.e. Docker-In-Docker-Image
+services:
+- docker:dind
 
-image: alpine:latest
-
+# Since we are using Alpine, everything is not installed by default.
+# Thus we are setting up the basics
+before_script:
+  - apk update && apk upgrade && apk add --no-cache bash openssh
+  
+# Environemt Variable for docker:dind service explaining to use overlay2 as supporting driver for docker
 variables:
-  # KUBE_INGRESS_BASE_DOMAIN is the application deployment domain and should be set as a variable at the group or project level.
-  # KUBE_INGRESS_BASE_DOMAIN: domain.example.com
-
-  POSTGRES_USER: user
-  POSTGRES_PASSWORD: testing-password
-  POSTGRES_ENABLED: "true"
-  POSTGRES_DB: $CI_ENVIRONMENT_SLUG
-
   DOCKER_DRIVER: overlay2
 
-  ROLLOUT_RESOURCE_TYPE: deployment
+# This is the major part of the code which explains the stages present in our pipeline.
+# In a django application we have various stages which include testing, packing the code,
+# performing migrations, collecting static files and running the application.
+# The various stages are broadly classified into 3 main categories:
 
-  DOCKER_TLS_CERTDIR: ""  # https://gitlab.com/gitlab-org/gitlab-runner/issues/4501
+# 1. Test       2. Release      3. Deploy
 
 stages:
-  - build
-  - test
-  - deploy  # dummy stage to follow the template guidelines
-  - review
-  - dast
-  - staging
-  - canary
-  - production
-  - incremental rollout 10%
-  - incremental rollout 25%
-  - incremental rollout 50%
-  - incremental rollout 100%
-  - performance
-  - cleanup
+- test
+- release
+- deploy
 
-workflow:
-  rules:
-    - if: '$BUILDPACK_URL || $AUTO_DEVOPS_EXPLICITLY_ENABLED == "1" || $DOCKERFILE_PATH'
+# Stage I
+# Testing Phase:
+# This is where the main code is tested.
+# Other options like code coverage, etc are also written in this phase
+test:
+  stage: test
+  # This repo includes python3, pip3 and postgres so that I need not
+  # setup python and postgres separately.
+  image: vaeum/alpine-python3-pip3
+  before_script:
+    # Installing requirements
+    - pip install --upgrade pip
+    - pip install -r requirements.txt
+  variables:
+    # Connecting to testDB
+    POSTGRES_DB: postgres
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: ''
+    POLLSAPI_PG_HOST: postgres
+  services:
+    - postgres:9.6-alpine
+  script:
+    # Command to test our application
+    - python manage.py test
 
-    - exists:
-        - Dockerfile
+# Stage II
+# Release Phase
+# In this phase, we package our code using docker
+# as we deploy containerized applications on kubernetes
+release:
+  stage: release
+  image: docker:latest
+  before_script:
+   # Note the image in L#69 being a docker image. This is because in release we
+   # need to package our application using docker and login so that we'll be able
+   # to push our images to Google Container Registry
 
-    # https://github.com/heroku/heroku-buildpack-clojure
-    - exists:
-        - project.clj
+   # Pre-requisites required to install google cloud sdk on gitlab runner
+   - export COMMIT_SHA=$(echo $CI_COMMIT_SHA | cut -c1-8)
+   - apk update
+   - apk upgrade
+   - apk add python python-dev py-pip build-base 
+   - apk add --update ca-certificates
+   - apk add --update -t deps curl
+   - apk del --purge deps
+   - rm /var/cache/apk/*
 
-    # https://github.com/heroku/heroku-buildpack-go
-    - exists:
-        - go.mod
-        - Gopkg.mod
-        - Godeps/Godeps.json
-        - vendor/vendor.json
-        - glide.yaml
-        - src/**/*.go
+  script:
+    # Build our image using docker
+    - docker build -t $GCP_PROJECT_ID/$CI_PROJECT_NAME:$COMMIT_SHA .
 
-    # https://github.com/heroku/heroku-buildpack-gradle
-    - exists:
-        - gradlew
-        - build.gradle
-        - settings.gradle
+    # Write our GCP service account private key into a file
+    - echo $GCLOUD_SERVICE_KEY | base64 -d > ${HOME}/gcloud-service-key.json
+    
+    # Download and install Google Cloud SDK
+    - wget https://dl.google.com/dl/cloudsdk/release/google-cloud-sdk.tar.gz
+    - tar zxvf google-cloud-sdk.tar.gz && ./google-cloud-sdk/install.sh --usage-reporting=false --path-update=true
+    
+    # Update gcloud components
+    - google-cloud-sdk/bin/gcloud --quiet components update
 
-    # https://github.com/heroku/heroku-buildpack-java
-    - exists:
-        - pom.xml
-        - pom.atom
-        - pom.clj
-        - pom.groovy
-        - pom.rb
-        - pom.scala
-        - pom.yaml
-        - pom.yml
+    # Give access to gcloud project
+    - google-cloud-sdk/bin/gcloud auth activate-service-account --key-file ${HOME}/gcloud-service-key.json  || die "unable to authenticate service account for gcloud"
+    
+    # Get current projects credentials to access it
+    - google-cloud-sdk/bin/gcloud container clusters get-credentials pollsapi --zone asia-south1-a --project test-gcp-208915
+    
+    # Configure container registry to push using docker
+    - docker login -u _json_key --password-stdin https://gcr.io < ${HOME}/gcloud-service-key.json
 
-    # https://github.com/heroku/heroku-buildpack-multi
-    - exists:
-        - .buildpacks
+    # Push the image using docker
+    - docker push $GCP_PROJECT_ID/$CI_PROJECT_NAME:$COMMIT_SHA
 
-    # https://github.com/heroku/heroku-buildpack-nodejs
-    - exists:
-        - package.json
+    # The tag, only master indicates that whenever code is pushed to master branch,
+    # only then run the pipeline
+  environment: production
 
-    # https://github.com/heroku/heroku-buildpack-php
-    - exists:
-        - composer.json
-        - index.php
+# Stage III - I
+# Deployment Phase
+# In this phase, migrations are performed.
+# Note that this is a manual stage as migrations are not run for each commit.
+# If needed to run for every merge/commit to master branch, then comment when:manual
+migrations:
+  image: google/cloud-sdk:alpine
+  stage: deploy
+  variables:
+    KUBE_LATEST_VERSION: "v1.8.5"
+  before_script:
+   # Pre-requisites required to install kybectl command line on gitlab runner
+   - export COMMIT_SHA=$(echo $CI_COMMIT_SHA | cut -c1-8)
+   - apk update
+   - apk upgrade
+   - apk add --update ca-certificates
+   - apk add --update -t deps curl
+   - curl -L https://storage.googleapis.com/kubernetes-release/release/${KUBE_LATEST_VERSION}/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl
+   - chmod +x /usr/local/bin/kubectl
+   - apk del --purge deps
+   - rm /var/cache/apk/*
 
-    # https://github.com/heroku/heroku-buildpack-play
-    # TODO: detect script excludes some scala files
-    - exists:
-        - '**/conf/application.conf'
+  script:
+    # Write our GCP service account private key into a file
+    - echo $GCLOUD_SERVICE_KEY | base64 -d > ${HOME}/gcloud-service-key.json
+    
+    # Update gcloud components
+    - gcloud --quiet components update
 
-    # https://github.com/heroku/heroku-buildpack-python
-    # TODO: detect script checks that all of these exist, not any
-    - exists:
-        - requirements.txt
-        - setup.py
-        - Pipfile
+    # Give access to gcloud project
+    - gcloud auth activate-service-account --key-file ${HOME}/gcloud-service-key.json  || die "unable to authenticate service account for gcloud"
+    - gcloud container clusters get-credentials pollsapi --zone asia-south1-a --project test-gcp-208915
+    
+    # Update the image tag inside the file polls-migration.yml using sed
+    - sed -i 's/${TAG}/'"$COMMIT_SHA"'/g' polls-migration.yml
 
-    # https://github.com/heroku/heroku-buildpack-ruby
-    - exists:
-        - Gemfile
+    # Run kubectl apply to apply any changes made in env variables, etc
+    - kubectl apply -f polls-migration.yml
+  environment: production
+  
+  # Note that when: manual indicates that this is a manual action
+  # and will only trigger if they user clicks play button, in the pipeline
+  when: manual
 
-    # https://github.com/heroku/heroku-buildpack-scala
-    - exists:
-        - '*.sbt'
-        - project/*.scala
-        - .sbt/*.scala
-        - project/build.properties
+# Stage III - II
+# Deployment Phase
+# In this phase we will be collecting static files.
+# Usually collecting static files is a one time operation and is 
+# not done every time. For this reason this has been made a manual branch
+# meaning, it has to be triggered manually whenever required
+collect-static:
+  image: google/cloud-sdk:alpine
+  stage: deploy
+  variables:
+    KUBE_LATEST_VERSION: "v1.8.5"
+  before_script:
+   # Pre-requisites required to install kybectl command line on gitlab runner
+   - export COMMIT_SHA=$(echo $CI_COMMIT_SHA | cut -c1-8)
+   - apk update
+   - apk upgrade
+   - apk add --update ca-certificates
+   - apk add --update -t deps curl
+   - curl -L https://storage.googleapis.com/kubernetes-release/release/${KUBE_LATEST_VERSION}/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl
+   - chmod +x /usr/local/bin/kubectl
+   - apk del --purge deps
+   - rm /var/cache/apk/*
 
-    # https://github.com/dokku/buildpack-nginx
-    - exists:
-        - .static
+  script:
+    # Write our GCP service account private key into a file
+    - echo $GCLOUD_SERVICE_KEY | base64 -d > ${HOME}/gcloud-service-key.json
+    
+    # Update gcloud components
+    - gcloud --quiet components update
 
-# NOTE: These links point to the latest templates for development in GitLab canonical project,
-# therefore the actual templates that were included for Auto DevOps pipelines
-# could be different from the contents in the links.
-# To view the actual templates, please replace `master` to the specific GitLab version when
-# the Auto DevOps pipeline started running e.g. `v13.0.2-ee`.
-include:
-  - template: Jobs/Build.gitlab-ci.yml  # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Jobs/Build.gitlab-ci.yml
-  - template: Jobs/Test.gitlab-ci.yml  # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Jobs/Test.gitlab-ci.yml
-  - template: Jobs/Code-Quality.gitlab-ci.yml  # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Jobs/Code-Quality.gitlab-ci.yml
-  - template: Jobs/Code-Intelligence.gitlab-ci.yml  # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Jobs/Code-Intelligence.gitlab-ci.yml
-  - template: Jobs/Deploy.gitlab-ci.yml  # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Jobs/Deploy.gitlab-ci.yml
-  - template: Jobs/Deploy/ECS.gitlab-ci.yml  # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Jobs/Deploy/ECS.gitlab-ci.yml
-  - template: Jobs/Deploy/EC2.gitlab-ci.yml  # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Jobs/Deploy/EC2.gitlab-ci.yml
-  - template: Jobs/DAST-Default-Branch-Deploy.gitlab-ci.yml  # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Jobs/DAST-Default-Branch-Deploy.gitlab-ci.yml
-  - template: Jobs/Browser-Performance-Testing.gitlab-ci.yml  # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Jobs/Browser-Performance-Testing.gitlab-ci.yml
-  - template: Security/DAST.gitlab-ci.yml  # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Security/DAST.gitlab-ci.yml
-  - template: Security/Container-Scanning.gitlab-ci.yml  # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Security/Container-Scanning.gitlab-ci.yml
-  - template: Security/Dependency-Scanning.gitlab-ci.yml  # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Security/Dependency-Scanning.gitlab-ci.yml
-  - template: Security/License-Scanning.gitlab-ci.yml  # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Security/License-Scanning.gitlab-ci.yml
-  - template: Security/SAST.gitlab-ci.yml  # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Security/SAST.gitlab-ci.yml
-  - template: Security/Secret-Detection.gitlab-ci.yml  # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Security/Secret-Detection.gitlab-ci.yml
+    # Give access to gcloud project
+    - gcloud auth activate-service-account --key-file ${HOME}/gcloud-service-key.json  || die "unable to authenticate service account for gcloud"
+    - gcloud container clusters get-credentials pollsapi --zone asia-south1-a --project test-gcp-208915
+    
+    # Update the image tag inside the file polls-collect-static.yml using sed
+    - sed -i 's/${TAG}/'"$COMMIT_SHA"'/g' polls-collect-static.yml
+
+    # Run kubectl apply to apply any changes made in env variables, etc
+    - kubectl apply -f polls-collect-static.yml
+  environment: production
+  when: manual
+
+# Stage III - III
+# Deployment Phase
+# In this phase, we make sure to update our application based on
+# the data in current commit and mainly focus on application deployment.
+deploy:
+  image: google/cloud-sdk:alpine
+  stage: deploy
+  variables:
+    KUBE_LATEST_VERSION: "v1.8.5"
+  before_script:
+   # Pre-requisites required to install kybectl command line on gitlab runner
+   - export COMMIT_SHA=$(echo $CI_COMMIT_SHA | cut -c1-8)
+   - apk update
+   - apk upgrade
+   - apk add --update ca-certificates
+   - apk add --update -t deps curl
+   - curl -L https://storage.googleapis.com/kubernetes-release/release/${KUBE_LATEST_VERSION}/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl
+   - chmod +x /usr/local/bin/kubectl
+   - apk del --purge deps
+   - rm /var/cache/apk/*
+
+  script:
+    # Write our GCP service account private key into a file
+    - echo $GCLOUD_SERVICE_KEY | base64 -d > ${HOME}/gcloud-service-key.json
+    
+    # Update gcloud components
+    - gcloud --quiet components update
+
+    # Give access to gcloud project
+    - gcloud auth activate-service-account --key-file ${HOME}/gcloud-service-key.json  || die "unable to authenticate service account for gcloud"
+    - gcloud container clusters get-credentials pollsapi --zone asia-south1-a --project test-gcp-208915
+    
+    # Run kubectl apply to apply any changes made in env variables, etc
+    - kubectl apply -f pollsapi.yml
+
+    # Update deployment with new image
+    - kubectl set image deployment/polls-api ${CI_PROJECT_NAME}=$GCP_PROJECT_ID/$CI_PROJECT_NAME:$COMMIT_SHA
+  environment: production
