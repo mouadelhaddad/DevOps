@@ -5,12 +5,12 @@ services:
 
 # Since we are using Alpine, everything is not installed by default.
 # Thus we are setting up the basics
-before_script:
-  - apk update && apk upgrade && apk add --no-cache bash openssh
-  
+
 # Environemt Variable for docker:dind service explaining to use overlay2 as supporting driver for docker
 variables:
   DOCKER_DRIVER: overlay2
+  DOCKER_HOST : tcp://localhost:2375
+  DOCKER_TLS_CERTDIR: ""
 
 # This is the major part of the code which explains the stages present in our pipeline.
 # In a django application we have various stages which include testing, packing the code,
@@ -35,6 +35,7 @@ test:
   image: python:latest
   before_script:
     # Installing requirements
+    - apk update && apk upgrade && apk add --no-cache bash openssh
     - pip install -r requirements.txt
   variables:
     # Connecting to testDB
