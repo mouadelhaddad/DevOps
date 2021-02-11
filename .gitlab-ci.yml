@@ -53,10 +53,9 @@ test:
 
 deploy:
   stage: deploy
-  image: Alpine 
+  image: docker/compose
   script :
-    - apk add sudo 
-    - sudo apt install docker-compose
+    - export DOCKER_HOST
     - docker-compose up
 
 include:
