@@ -29,12 +29,7 @@ image: alpine:latest
 services:
     - name: docker:dind
       entrypoint: ["env", "-u", "DOCKER_HOST"]
-      command: ["dockerd-entrypoint.sh"]
-  variables:
-    DOCKER_HOST: tcp://docker:2375/
-    DOCKER_DRIVER: overlay2
-    # See https://github.com/docker-library/docker/pull/166
-    DOCKER_TLS_CERTDIR: ""
+      command: ["dockerd-entrypoint.sh"]    
 
 variables:
   # AUTO_DEVOPS_DOMAIN is the application deployment domain and should be set as a variable at the group or project level.
@@ -48,7 +43,10 @@ variables:
   KUBERNETES_VERSION: 1.8.6
   HELM_VERSION: 2.6.1
   CODECLIMATE_VERSION: 0.69.0
-
+  DOCKER_HOST: tcp://docker:2375/
+  DOCKER_DRIVER: overlay2
+    # See https://github.com/docker-library/docker/pull/166
+  DOCKER_TLS_CERTDIR: ""
 stages:
   - build
   - test
