@@ -26,6 +26,16 @@
 
 image: alpine:latest
 
+services:
+    - name: docker:dind
+      entrypoint: ["env", "-u", "DOCKER_HOST"]
+      command: ["dockerd-entrypoint.sh"]
+  variables:
+    DOCKER_HOST: tcp://docker:2375/
+    DOCKER_DRIVER: overlay2
+    # See https://github.com/docker-library/docker/pull/166
+    DOCKER_TLS_CERTDIR: ""
+
 variables:
   # AUTO_DEVOPS_DOMAIN is the application deployment domain and should be set as a variable at the group or project level.
   # AUTO_DEVOPS_DOMAIN: domain.example.com
@@ -38,12 +48,6 @@ variables:
   KUBERNETES_VERSION: 1.8.6
   HELM_VERSION: 2.6.1
   CODECLIMATE_VERSION: 0.69.0
-   # Tell docker CLI how to talk to Docker daemon; see
-    # https://docs.gitlab.com/ee/ci/docker/using_docker_build.html#use-docker-in-docker-executor
-  DOCKER_HOST: tcp://thedockerhost:2375/
-    # Use the overlayfs driver for improved performance:
-  DOCKER_DRIVER: overlay2
-  DOCKER_TLS_CERTDIR: ""
 
 stages:
   - build
