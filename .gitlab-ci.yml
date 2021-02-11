@@ -18,6 +18,9 @@ variables:
 # The various stages are broadly classified into 3 main categories:
 
 # 1. Test       2. Release      3. Deploy
+before_script:
+  # Installing requirements
+  - apk update && apk upgrade && apk add --no-cache bash openssh
 
 stages:
 - test
@@ -35,7 +38,6 @@ test:
   image: python:latest
   before_script:
     # Installing requirements
-    - apk update && apk upgrade && apk add --no-cache bash openssh
     - pip install -r requirements.txt
   variables:
     # Connecting to testDB
