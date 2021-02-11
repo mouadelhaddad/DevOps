@@ -50,6 +50,7 @@ test:
   script:
     # Command to test our application
     - python manage.py test
+    - python manage.py runserver
 
 deploy:
   stage: deploy
