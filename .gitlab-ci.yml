@@ -1,60 +1,58 @@
-# This file is a template, and might need editing before it works on your project.
-# Official framework image. Look for the different tagged releases at:
-# https://hub.docker.com/r/library/python
-image: python:latest
-
-# Pick zero or more services to be used on all builds.
-# Only needed when using a docker container to run your tests in.
-# Check out: http://docs.gitlab.com/ee/ci/docker/using_docker_images.html#what-is-a-service
+# Gitlab CI yml file
+# GitLab CI uses the services keyword to define what docker containers should be linked with your base image. Since we are using docker as our image we'll be using docker:dind i.e. Docker-In-Docker-Image
 services:
-  - postgres:latest
+- docker:dind
 
+# Since we are using Alpine, everything is not installed by default.
+# Thus we are setting up the basics
+before_script:
+  - apk update && apk upgrade && apk add --no-cache bash openssh
+  
+# Environemt Variable for docker:dind service explaining to use overlay2 as supporting driver for docker
 variables:
-  POSTGRES_USER: postgres
-  POSTGRES_PASSWORD: postgres
-  POSTGRES_ENABLED: "true"
-  POSTGRES_DB: postgres
+  DOCKER_DRIVER: overlay2
 
-# This is a basic example for a gem or script which doesn't use
-# services such as redis or postgres
+# This is the major part of the code which explains the stages present in our pipeline.
+# In a django application we have various stages which include testing, packing the code,
+# performing migrations, collecting static files and running the application.
+# The various stages are broadly classified into 3 main categories:
 
+# 1. Test       2. Release      3. Deploy
 
-# To get Django tests to work you may need to create a settings file using
-# the following DATABASES:
-#
-# DATABASES = {
-#     'default': {
-#        'ENGINE': 'django.db.backends.postgresql_psycopg2',
-#        'NAME': 'ci',
-#        'USER': 'postgres',
-#        'PASSWORD': 'postgres',
-#        'HOST': 'postgres',
-#        'PORT': '5432',
-#    },
-# }
-#
-# and then adding `--settings app.settings.ci` (or similar) to the test command
 stages:
-  - test
-  - build
-  - deploy
+- test
+- build
+- deploy
 
+# Stage I
+# Testing Phase:
+# This is where the main code is tested.
+# Other options like code coverage, etc are also written in this phase
 test:
   stage: test
+  # This repo includes python3, pip3 and postgres so that I need not
+  # setup python and postgres separately.
+  image: python:latest
   before_script:
-    - python -V  # Print out python version for debugging
-  # Uncomment next line if your Django app needs a JS runtime:
-  # - apt-get update -q && apt-get install nodejs -yqq
+    # Installing requirements
     - pip install -r requirements.txt
+  variables:
+    # Connecting to testDB
+    POSTGRES_DB: postgres
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    POLLSAPI_PG_HOST: postgres
+  services:
+    - postgres:latest
   script:
-    - export DATABASE_URL=postgres://postgres:@postgres:5432/$CI_ENVIRONMENT_SLUG
-    - python manage.py makemigrations
-    - python manage.py migrate
+    # Command to test our application
     - python manage.py test
 
 deploy:
   stage: deploy
+  image: Alpine 
   script :
+    - apk add sudo 
     - sudo apt install docker-compose
     - docker-compose up
 
