@@ -1,62 +1,25 @@
-# Gitlab CI yml file
-# GitLab CI uses the services keyword to define what docker containers should be linked with your base image. Since we are using docker as our image we'll be using docker:dind i.e. Docker-In-Docker-Image
+image: docker:latest
 services:
-- docker:dind
-
-# Since we are using Alpine, everything is not installed by default.
-# Thus we are setting up the basics
-
-# Environemt Variable for docker:dind service explaining to use overlay2 as supporting driver for docker
-variables:
-  DOCKER_DRIVER: overlay2
-  DOCKER_HOST : tcp://localhost:2375
-  DOCKER_TLS_CERTDIR: ""
-
-# This is the major part of the code which explains the stages present in our pipeline.
-# In a django application we have various stages which include testing, packing the code,
-# performing migrations, collecting static files and running the application.
-# The various stages are broadly classified into 3 main categories:
-
-# 1. Test       2. Release      3. Deploy
-before_script:
-  # Installing requirements
-  - apk update && apk upgrade && apk add --no-cache bash openssh
-
+    - docker:dind
 stages:
-- test
-- build
-- deploy
-
-# Stage I
-# Testing Phase:
-# This is where the main code is tested.
-# Other options like code coverage, etc are also written in this phase
+    - build
+    - test
+    - deploy
+before_script:
+    - apk add sudo
+    - sudo docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+build:
+    stage: build
+    script:
+        - sudo docker build --pull -t "$CI_REGISTRY_IMAGE" .
+        - sudo docker push "$CI_REGISTRY_IMAGE"
 test:
-  stage: test
-  # This repo includes python3, pip3 and postgres so that I need not
-  # setup python and postgres separately.
-  image: python:latest
-  before_script:
-    # Installing requirements
-    - pip install -r requirements.txt
-  variables:
-    # Connecting to testDB
-    POSTGRES_DB: postgres
-    POSTGRES_USER: postgres
-    POSTGRES_PASSWORD: postgres
-    POLLSAPI_PG_HOST: postgres
-  services:
-    - postgres:latest
-  script:
-    # Command to test our application
-    - python manage.py test
-
+    stage: test
+    script:
+        - sudo apt -y install docker-compose
+        - sudo docker-compose run web python manage.py test 
 deploy:
-  stage: deploy
-  image: docker/compose
-  script :
-    - export DOCKER_HOST
-    - docker-compose -H $DOCKER_HOST up
-
-include:
-  - template: Jobs/Build.gitlab-ci.yml
+    stage: deploy
+    script:
+        - sudo apt -y install docker-compose
+        - sudo docker-compose up 
